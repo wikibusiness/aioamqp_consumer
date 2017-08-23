@@ -25,8 +25,7 @@ class AMQPMixin:
         if _code is not None or _message is not None:
             logger.exception(exc)
 
-    @asyncio.coroutine
-    def _connect(self, url, on_error=None, **kwargs):
+    async def _connect(self, url, on_error=None, **kwargs):
         if self._connected:
             return
 
@@ -42,7 +41,7 @@ class AMQPMixin:
         kwargs['loop'] = self.loop
 
         try:
-            self._transport, self._protocol = yield from aioamqp.from_url(
+            self._transport, self._protocol = await aioamqp.from_url(
                 url,
                 **kwargs
             )
@@ -51,20 +50,19 @@ class AMQPMixin:
 
         _channel = self._protocol.channel()
 
-        self._channel = yield from asyncio.shield(_channel, loop=self.loop)
+        self._channel = await asyncio.shield(_channel, loop=self.loop)
 
         self._connected = True
 
         logger.debug('Connected amqp')
 
-    @asyncio.coroutine
-    def _disconnect(self):
+    async def _disconnect(self):
         if self._transport is not None and self._protocol is not None:
             if self._channel is not None:
                 try:
                     _close = self._channel.close()
 
-                    yield from asyncio.shield(_close, loop=self.loop)
+                    await asyncio.shield(_close, loop=self.loop)
 
                     logger.debug('Amqp channel is closed')
                 except aioamqp.AioamqpException:
@@ -73,7 +71,7 @@ class AMQPMixin:
             try:
                 _close = self._protocol.close()
 
-                yield from asyncio.shield(_close, loop=self.loop)
+                await asyncio.shield(_close, loop=self.loop)
 
                 self._transport.close()
 
@@ -85,56 +83,47 @@ class AMQPMixin:
         self._transport = self._protocol = self._channel = None
         self._connected = False
 
-    @asyncio.coroutine
-    def _queue_declare(self, **kwargs):
+    async def _queue_declare(self, **kwargs):
         _queue_declare = self._channel.queue_declare(**kwargs)
 
-        return (yield from asyncio.shield(_queue_declare, loop=self.loop))
+        return await asyncio.shield(_queue_declare, loop=self.loop)
 
-    @asyncio.coroutine
-    def _queue_purge(self, *args, **kwargs):
+    async def _queue_purge(self, *args, **kwargs):
         _queue_purge = self._channel.queue_purge(*args, **kwargs)
 
-        return (yield from asyncio.shield(_queue_purge, loop=self.loop))
+        return await asyncio.shield(_queue_purge, loop=self.loop)
 
-    @asyncio.coroutine
-    def _queue_delete(self, *args, **kwargs):
+    async def _queue_delete(self, *args, **kwargs):
         _queue_delete = self._channel.queue_delete(*args, **kwargs)
 
-        return (yield from asyncio.shield(_queue_delete, loop=self.loop))
+        return await asyncio.shield(_queue_delete, loop=self.loop)
 
-    @asyncio.coroutine
-    def _basic_reject(self, *args, **kwargs):
+    async def _basic_reject(self, *args, **kwargs):
         _basic_reject = self._channel.basic_reject(*args, **kwargs)
 
-        return (yield from asyncio.shield(_basic_reject, loop=self.loop))
+        return await asyncio.shield(_basic_reject, loop=self.loop)
 
-    @asyncio.coroutine
-    def _basic_client_ack(self, *args, **kwargs):
+    async def _basic_client_ack(self, *args, **kwargs):
         _ack = self._channel.basic_client_ack(*args, **kwargs)
 
-        return (yield from asyncio.shield(_ack, loop=self.loop))
+        return await asyncio.shield(_ack, loop=self.loop)
 
-    @asyncio.coroutine
-    def _basic_qos(self, **kwargs):
+    async def _basic_qos(self, **kwargs):
         _basic_qos = self._channel.basic_qos(**kwargs)
 
-        return (yield from asyncio.shield(_basic_qos, loop=self.loop))
+        return await asyncio.shield(_basic_qos, loop=self.loop)
 
-    @asyncio.coroutine
-    def _basic_consume(self, *args, **kwargs):
+    async def _basic_consume(self, *args, **kwargs):
         _basic_consume = self._channel.basic_consume(*args, **kwargs)
 
-        return (yield from asyncio.shield(_basic_consume, loop=self.loop))
+        return await asyncio.shield(_basic_consume, loop=self.loop)
 
-    @asyncio.coroutine
-    def _basic_publish(self, *args, **kwargs):
+    async def _basic_publish(self, *args, **kwargs):
         _basic_publish = self._channel.basic_publish(*args, **kwargs)
 
-        return (yield from asyncio.shield(_basic_publish, loop=self.loop))
+        return await asyncio.shield(_basic_publish, loop=self.loop)
 
-    @asyncio.coroutine
-    def _basic_cancel(self, *args, **kwargs):
+    async def _basic_cancel(self, *args, **kwargs):
         _basic_cancel = self._channel.basic_cancel(*args, **kwargs)
 
-        return (yield from asyncio.shield(_basic_cancel, loop=self.loop))
+        return await asyncio.shield(_basic_cancel, loop=self.loop)

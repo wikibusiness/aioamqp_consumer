@@ -4,7 +4,7 @@ import logging
 import aioamqp
 import async_timeout
 
-from .compat import create_future, ensure_future, unpartial, PY_350
+from .compat import create_future, unpartial
 from .exceptions import Ack, DeadLetter, Reject
 from .log import logger
 from .mixins import AMQPMixin
@@ -68,11 +68,10 @@ class Consumer(AMQPMixin):
         self._down.set()
         self._up = asyncio.Event(loop=self.loop)
 
-        self.__monitor = ensure_future(self._monitor(), loop=self.loop)
+        self.__monitor = asyncio.ensure_future(self._monitor(), loop=self.loop)
 
-    @asyncio.coroutine
-    def _get_concurrency(self):
-        with (yield from self._scale_lock):
+    async def _get_concurrency(self):
+        async with self._scale_lock:
             return self._concurrency
 
     def _set_concurrency(self, concurrency):
@@ -96,7 +95,7 @@ class Consumer(AMQPMixin):
         return self._consume_callback_fut
 
     def _add_worker(self):
-        worker = ensure_future(self._worker(), loop=self.loop)
+        worker = asyncio.ensure_future(self._worker(), loop=self.loop)
 
         self._workers.add(worker)
 
@@ -110,14 +109,13 @@ class Consumer(AMQPMixin):
             ),
         )
 
-    @asyncio.coroutine
-    def _remove_worker(self):
+    async def _remove_worker(self):
         worker = next(iter(self._workers))
 
         worker.cancel()
 
         try:
-            yield from worker
+            await worker
         except asyncio.CancelledError:
             pass
         except aioamqp.AioamqpException as exc:
@@ -145,8 +143,7 @@ class Consumer(AMQPMixin):
             ),
         )
 
-    @asyncio.coroutine
-    def _run_task(self, payload, properties, delivery_tag):
+    async def _run_task(self, payload, properties, delivery_tag):
         try:
             try:
                 _task = self.task(payload, properties)
@@ -164,9 +161,10 @@ class Consumer(AMQPMixin):
             task_timeout = False
 
             try:
-                with async_timeout.timeout(self.task_timeout, loop=self.loop):
+                async with async_timeout.timeout(self.task_timeout,
+                                                 loop=self.loop):
                     try:
-                        yield from _task
+                        await _task
                     except self.reject_exceptions as exc:
                         raise Reject from exc
                     except self.dead_letter_exceptions as exc:
@@ -198,22 +196,21 @@ class Consumer(AMQPMixin):
         self._log_task(status='successfully finished')
         return self._basic_client_ack(delivery_tag)
 
-    @asyncio.coroutine
-    def _worker(self):
+    async def _worker(self):
         while True:
             delivery_tag, finalizer = None, None
             try:
-                payload, envelope, properties = yield from self._queue.get()
+                payload, envelope, properties = await self._queue.get()
                 delivery_tag = envelope.delivery_tag
 
                 try:
-                    finalizer = yield from self._run_task(
+                    finalizer = await self._run_task(
                         payload,
                         properties,
                         delivery_tag,
                     )
 
-                    yield from finalizer
+                    await finalizer
                 finally:
                     self._queue.task_done()
             except asyncio.CancelledError:
@@ -222,7 +219,7 @@ class Consumer(AMQPMixin):
                     finalizer is None and
                     not self._down.is_set()
                 ):
-                    yield from self._basic_reject(delivery_tag, requeue=True)
+                    await self._basic_reject(delivery_tag, requeue=True)
 
                 logger.debug('Worker (queue: {queue}) is cancelled'.format(
                     queue=self.queue_name,
@@ -238,25 +235,23 @@ class Consumer(AMQPMixin):
         if self._up.is_set():
             self._up.clear()
 
-    @asyncio.coroutine
-    def ok(self, timeout=None):
+    async def ok(self, timeout=None):
         try:
-            with async_timeout.timeout(timeout, loop=self.loop):
-                yield from self._up.wait()
+            async with async_timeout.timeout(timeout, loop=self.loop):
+                await self._up.wait()
         except asyncio.TimeoutError:
             raise aioamqp.AioamqpException
 
-    @asyncio.coroutine
-    def scale(self, concurrency, wait_ok=True, timeout=None):
+    async def scale(self, concurrency, wait_ok=True, timeout=None):
         if concurrency <= 0:
             raise NotImplementedError
 
         assert not self._closed
 
         if wait_ok:
-            yield from self.ok(timeout=timeout)
+            await self.ok(timeout=timeout)
 
-        with (yield from self._scale_lock):
+        async with self._scale_lock:
             # for initial scale, compare to real amount of workers
             current_concurrency = len(self._workers)
 
@@ -272,7 +267,7 @@ class Consumer(AMQPMixin):
             if self._concurrency != current_concurrency:
                 prefetch = self._concurrency * self.tasks_per_worker
                 try:
-                    yield from self._basic_qos(
+                    await self._basic_qos(
                         prefetch_size=0,
                         prefetch_count=prefetch,
                         connection_global=True,
@@ -289,7 +284,7 @@ class Consumer(AMQPMixin):
 
             if current_concurrency > self._concurrency:
                 for _ in range(current_concurrency - self._concurrency):
-                    yield from self._remove_worker()
+                    await self._remove_worker()
             elif current_concurrency < self._concurrency:
                 for _ in range(self._concurrency - current_concurrency):
                     self._add_worker()
@@ -301,22 +296,21 @@ class Consumer(AMQPMixin):
             curr_conc=self._concurrency,
         ))
 
-    @asyncio.coroutine
-    def join(self, delay=1, timeout=None, wait_ok=True):
+    async def join(self, delay=1, timeout=None, wait_ok=True):
         queue_kwargs = self.queue_kwargs.copy()
         queue_kwargs.setdefault('passive', True)
 
-        with async_timeout.timeout(timeout, loop=self.loop):
+        async with async_timeout.timeout(timeout, loop=self.loop):
             while True:
                 if wait_ok:
-                    yield from self.ok()
+                    await self.ok()
 
-                yield from self._queue.join()
+                await self._queue.join()
 
                 try:
-                    yield from asyncio.sleep(delay, loop=self.loop)
+                    await asyncio.sleep(delay, loop=self.loop)
 
-                    queue = yield from self._queue_declare(
+                    queue = await self._queue_declare(
                         queue_name=self.queue_name,
                         **self.queue_kwargs
                     )
@@ -332,13 +326,12 @@ class Consumer(AMQPMixin):
                     if queue['message_count'] == 0 and self._queue.empty():
                         break
 
-    @asyncio.coroutine
-    def _connect(self):
+    async def _connect(self):
         while True:
             try:
-                yield from super()._connect(self.amqp_url, **self.amqp_kwargs)
+                await super()._connect(self.amqp_url, **self.amqp_kwargs)
 
-                yield from self._queue_declare(
+                await self._queue_declare(
                     queue_name=self.queue_name,
                     **self.queue_kwargs
                 )
@@ -361,20 +354,19 @@ class Consumer(AMQPMixin):
                     exc_info=True,
                 )
 
-                yield from asyncio.sleep(self.reconnect_delay, loop=self.loop)
+                await asyncio.sleep(self.reconnect_delay, loop=self.loop)
 
-    @asyncio.coroutine
-    def _consume(self):
+    async def _consume(self):
         while True:
-            yield from self._connect()
+            await self._connect()
 
             try:
-                yield from self.scale(self._concurrency, wait_ok=False)
+                await self.scale(self._concurrency, wait_ok=False)
             except aioamqp.AioamqpException:
                 continue
 
             try:
-                consumer = yield from self._basic_consume(
+                consumer = await self._basic_consume(
                     self._consume_callback,
                     self.queue_name,
                     no_ack=False,
@@ -392,9 +384,8 @@ class Consumer(AMQPMixin):
             queue=self.queue_name,
         ))
 
-    @asyncio.coroutine
-    def _stop(self, cancel_workers=True, flush_queue=True):
-        with (yield from self._stop_lock):
+    async def _stop(self, cancel_workers=True, flush_queue=True):
+        async with self._stop_lock:
             if self._up.is_set():
                 self._up.clear()
 
@@ -402,12 +393,12 @@ class Consumer(AMQPMixin):
                 queue=self.queue_name,
             ))
 
-            with (yield from self._scale_lock):
+            async with self._scale_lock:
                 if cancel_workers:
                     self.__cancel_workers()
 
                 if self._workers:
-                    yield from asyncio.gather(*self._workers, loop=self.loop)
+                    await asyncio.gather(*self._workers, loop=self.loop)
                 logger.debug('All workers (queue: {queue}) are stopped'.format(
                     queue=self.queue_name,
                 ))
@@ -417,7 +408,7 @@ class Consumer(AMQPMixin):
                         self._queue.get_nowait()
                         self._queue.task_done()
 
-            yield from self._disconnect()
+            await self._disconnect()
 
     def __cancel_workers(self):
         logger.debug('Stopping consumer workers (queue: {queue})'.format(
@@ -429,25 +420,23 @@ class Consumer(AMQPMixin):
 
             worker.cancel()
 
-    @asyncio.coroutine
-    def _monitor(self):
+    async def _monitor(self):
         while True:
             try:
-                yield from self._consume()
+                await self._consume()
 
-                yield from self._down.wait()
+                await self._down.wait()
 
-                yield from self._stop()
+                await self._stop()
             except asyncio.CancelledError:
                 break
 
-    @asyncio.coroutine
-    def _disconnect(self):
+    async def _disconnect(self):
         if self._transport is not None and self._protocol is not None:
             if self._channel is not None:
                 if self._consumer_tag is not None:
                     try:
-                        yield from self._basic_cancel(self._consumer_tag)
+                        await self._basic_cancel(self._consumer_tag)
                     except aioamqp.AioamqpException:
                         pass
 
@@ -459,7 +448,7 @@ class Consumer(AMQPMixin):
 
         self._consumer_tag = None
 
-        yield from super()._disconnect()
+        await super()._disconnect()
 
         logger.debug(
             'Consumer (queue: {queue}) disconnected from amqp'.format(
@@ -478,29 +467,25 @@ class Consumer(AMQPMixin):
             queue=self.queue_name,
         ))
 
-    @asyncio.coroutine
-    def wait_closed(self):
+    async def wait_closed(self):
         assert self._closed, 'Must be closed first'
 
         try:
-            yield from self.__monitor
+            await self.__monitor
         except asyncio.CancelledError:
             pass
 
-        yield from self._stop(cancel_workers=False)
+        await self._stop(cancel_workers=False)
 
-        yield from self._consume_callback_fut
+        await self._consume_callback_fut
 
         logger.debug('Consumer (queue: {queue}) closed'.format(
             queue=self.queue_name,
         ))
 
-    if PY_350:
-        @asyncio.coroutine
-        def __aenter__(self):  # noqa
-            return self
+    async def __aenter__(self):  # noqa
+        return self
 
-        @asyncio.coroutine
-        def __aexit__(self, *exc_info):  # noqa
-            self.close()
-            yield from self.wait_closed()
+    async def __aexit__(self, *exc_info):  # noqa
+        self.close()
+        await self.wait_closed()
