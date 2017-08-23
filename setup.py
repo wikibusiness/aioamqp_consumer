@@ -30,7 +30,7 @@ setup(
     long_description=read('README.rst'),
     install_requires=[
         'aioamqp>=0.10.0',
-        'async_timeout',
+        'async_timeout>=1.3.0',
     ],
     packages=['aioamqp_consumer'],
     include_package_data=True,
