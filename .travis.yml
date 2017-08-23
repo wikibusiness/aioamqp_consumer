@@ -4,7 +4,6 @@ sudo: true
 services:
   - rabbitmq
 python:
-  - "3.4"
   - "3.5"
   - "3.6"
 install:
