@@ -1,6 +1,5 @@
 import asyncio
 
-from .compat import PY_350
 from .mixins import AMQPMixin
 
 
@@ -31,44 +30,40 @@ class Producer(AMQPMixin):
 
         self._known_queues = set()
 
-    @asyncio.coroutine
-    def _ensure_queue(self, queue_name, *, queue_kwargs):
-        with (yield from self._ensure_queue_lock):
+    async def _ensure_queue(self, queue_name, *, queue_kwargs):
+        async with self._ensure_queue_lock:
             if queue_name in self._known_queues:
                 return
 
-            yield from self.queue_declare(
+            await self.queue_declare(
                 queue_name,
                 queue_kwargs=queue_kwargs,
             )
 
             self._known_queues.add(queue_name)
 
-    @asyncio.coroutine
-    def _connect(self):
-        with (yield from self._connect_lock):
+    async def _connect(self):
+        async with self._connect_lock:
             if not self._connected:
-                yield from super()._connect(self.amqp_url, **self.amqp_kwargs)
+                await super()._connect(self.amqp_url, **self.amqp_kwargs)
 
-    @asyncio.coroutine
-    def queue_declare(self, queue_name, *, queue_kwargs=None):
+    async def queue_declare(self, queue_name, *, queue_kwargs=None):
         if queue_kwargs is None:
             queue_kwargs = {}
 
         try:
-            yield from self._connect()
+            await self._connect()
 
-            result = yield from self._queue_declare(
+            result = await self._queue_declare(
                 queue_name=queue_name,
                 **queue_kwargs
             )
             return result
         except:  # noqa
-            yield from self._disconnect()
+            await self._disconnect()
             raise
 
-    @asyncio.coroutine
-    def publish(
+    async def publish(
         self,
         payload,
 
@@ -89,14 +84,14 @@ class Producer(AMQPMixin):
         try:
             assert not self._closed, 'Cannot publish while closed'
 
-            yield from self._connect()
+            await self._connect()
 
-            yield from self._ensure_queue(
+            await self._ensure_queue(
                 queue_name,
                 queue_kwargs=queue_kwargs,
             )
 
-            result = yield from self._basic_publish(
+            result = await self._basic_publish(
                 payload,
                 exchange_name=exchange_name,
                 routing_key=queue_name,
@@ -106,54 +101,47 @@ class Producer(AMQPMixin):
             )
             return result
         except:  # noqa
-            yield from self._disconnect()
+            await self._disconnect()
             raise
 
-    @asyncio.coroutine
-    def queue_purge(self, queue_name, **kwargs):
+    async def queue_purge(self, queue_name, **kwargs):
         try:
             assert not self._closed, 'Cannot purge while closed'
 
-            yield from self._connect()
+            await self._connect()
 
-            yield from self._queue_purge(queue_name, **kwargs)
+            await self._queue_purge(queue_name, **kwargs)
         except:  # noqa
-            yield from self._disconnect()
+            await self._disconnect()
             raise
 
-    @asyncio.coroutine
-    def queue_delete(self, queue_name, **kwargs):
+    async def queue_delete(self, queue_name, **kwargs):
         try:
             assert not self._closed, 'Cannot delete while closed'
 
-            yield from self._connect()
+            await self._connect()
 
-            yield from self._queue_delete(queue_name, **kwargs)
+            await self._queue_delete(queue_name, **kwargs)
         except:  # noqa
-            yield from self._disconnect()
+            await self._disconnect()
             raise
 
-    @asyncio.coroutine
-    def _disconnect(self):
+    async def _disconnect(self):
         self._known_queues = set()
 
-        yield from super()._disconnect()
+        await super()._disconnect()
 
     def close(self):
         self._closed = True
 
-    @asyncio.coroutine
-    def wait_closed(self):
+    async def wait_closed(self):
         assert self._closed, 'Must be closed first'
 
-        yield from self._disconnect()
+        await self._disconnect()
 
-    if PY_350:
-        @asyncio.coroutine
-        def __aenter__(self):  # noqa
-            return self
+    async def __aenter__(self):  # noqa
+        return self
 
-        @asyncio.coroutine
-        def __aexit__(self, *exc_info):  # noqa
-            self.close()
-            yield from self.wait_closed()
+    async def __aexit__(self, *exc_info):  # noqa
+        self.close()
+        await self.wait_closed()

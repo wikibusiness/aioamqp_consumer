@@ -28,6 +28,7 @@ setup(
     url='https://github.com/wikibusiness/aioamqp_consumer',
     description='Consumer/producer like library built over amqp (aioamqp)',
     long_description=read('README.rst'),
+    python_requires='>=3.5.0',
     install_requires=[
         'aioamqp>=0.10.0',
         'async_timeout>=1.3.0',
@@ -44,7 +45,6 @@ setup(
         'Operating System :: Microsoft :: Windows',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
     ],
