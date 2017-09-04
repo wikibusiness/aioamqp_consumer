@@ -1,18 +1,18 @@
 import asyncio
+import socket
+import time
+import uuid
 
 import pytest
-from aioamqp_consumer import Producer
+from docker import from_env as docker_from_env
 
-AMQP_URL = 'amqp://guest:guest@127.0.0.1:5672//'
-AMQP_QUEUE = 'test'
+from aioamqp_consumer import Producer
 
 
 @pytest.fixture
 def loop(request):
-    with pytest.raises(RuntimeError):
-        asyncio.get_event_loop()
-
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(None)
 
     loop.set_debug(True)
 
@@ -23,18 +23,6 @@ def loop(request):
     loop.call_soon(loop.stop)
     loop.run_forever()
     loop.close()
-
-
-@pytest.fixture
-def producer(loop):
-    producer = Producer(AMQP_URL, loop=loop)
-
-    loop.run_until_complete(producer.queue_delete(AMQP_QUEUE))
-
-    yield producer
-
-    producer.close()
-    loop.run_until_complete(producer.wait_closed())
 
 
 @pytest.mark.tryfirst
@@ -63,3 +51,99 @@ def pytest_pyfunc_call(pyfuncitem):
         loop.run_until_complete(pyfuncitem.obj(**testargs))
 
         return True
+
+
+@pytest.fixture(scope='session')
+def session_id():
+    '''Unique session identifier, random string.'''
+    return str(uuid.uuid4())
+
+
+@pytest.fixture(scope='session')
+def docker():
+    client = docker_from_env(version='auto')
+    return client
+
+
+def pytest_addoption(parser):
+    parser.addoption("--rabbit_tag", action="append", default=[],
+                     help=("Rabbitmq server versions. "
+                           "May be used several times. "
+                           "3.6.11-alpine by default"))
+    parser.addoption("--no-pull", action="store_true", default=False,
+                     help="Don't perform docker images pulling")
+
+
+def pytest_generate_tests(metafunc):
+    if 'rabbit_tag' in metafunc.fixturenames:
+        tags = set(metafunc.config.option.rabbit_tag)
+        if not tags:
+            tags = ['3.6.11-alpine']
+        else:
+            tags = list(tags)
+        metafunc.parametrize("rabbit_tag", tags, scope='session')
+
+
+def probe(container):
+    delay = 0.001
+    for i in range(20):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.connect((container['host'], container['port']))
+            break
+        except OSError:
+            time.sleep(delay)
+            delay = min(delay*2, 1)
+        finally:
+            s.close()
+    else:
+        pytest.fail("Cannot start rabbitmq server")
+
+
+@pytest.fixture(scope='session')
+def rabbit_container(docker, session_id, rabbit_tag, request):
+    image = 'rabbitmq:{}'.format(rabbit_tag)
+    if not request.config.option.no_pull:
+        docker.images.pull(image)
+    container = docker.containers.run(
+        image, detach=True,
+        name='rabbitmq-'+session_id,
+        ports={'5672/tcp': None})
+
+    inspection = docker.api.inspect_container(container.id)
+    host = inspection['NetworkSettings']['IPAddress']
+    ret = {'container': container,
+           'host': host,
+           'port': 5672,
+           'login': 'guest',
+           'password': 'guest'}
+    probe(ret)
+    yield ret
+
+    container.kill()
+    container.remove()
+
+
+@pytest.fixture
+def amqp_url(rabbit_container):
+    return 'amqp://{}:{}@{}:{}//'.format(rabbit_container['login'],
+                                         rabbit_container['password'],
+                                         rabbit_container['host'],
+                                         rabbit_container['port'])
+
+
+@pytest.fixture
+def amqp_queue_name():
+    return 'test'
+
+
+@pytest.fixture
+def producer(loop, amqp_url, amqp_queue_name):
+    producer = Producer(amqp_url, loop=loop)
+
+    loop.run_until_complete(producer.queue_delete(amqp_queue_name))
+
+    yield producer
+
+    producer.close()
+    loop.run_until_complete(producer.wait_closed())

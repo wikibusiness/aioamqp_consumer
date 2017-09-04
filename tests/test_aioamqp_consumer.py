@@ -1,15 +1,14 @@
 import pytest
-from aioamqp_consumer import Consumer
 
-from tests.conftest import AMQP_QUEUE, AMQP_URL
+from aioamqp_consumer import Consumer
 
 
 @pytest.mark.run_loop
-async def test_consumer_smoke(producer, loop):
+async def test_consumer_smoke(producer, loop, amqp_queue_name, amqp_url):
     test_data = [b'test'] * 5
 
     for data in test_data:
-        await producer.publish(data, AMQP_QUEUE)
+        await producer.publish(data, amqp_queue_name)
 
     test_results = []
 
@@ -17,9 +16,9 @@ async def test_consumer_smoke(producer, loop):
         test_results.append(payload)
 
     consumer = Consumer(
-        AMQP_URL,
+        amqp_url,
         task,
-        AMQP_QUEUE,
+        amqp_queue_name,
         loop=loop,
     )
 
