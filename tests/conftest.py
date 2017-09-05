@@ -1,9 +1,11 @@
+import atexit
 import asyncio
 import socket
 import time
 import uuid
 
 import pytest
+from aiohttp.test_utils import unused_port
 from docker import from_env as docker_from_env
 
 from aioamqp_consumer import Producer
@@ -70,6 +72,8 @@ def pytest_addoption(parser):
                      help=("Rabbitmq server versions. "
                            "May be used several times. "
                            "3.6.11-alpine by default"))
+    parser.addoption("--local-docker", action="store_true", default=False,
+                     help="Use 0.0.0.0 as docker host, useful for MacOs X")
 
 
 def pytest_generate_tests(metafunc):
@@ -101,13 +105,29 @@ def probe(container):
 @pytest.fixture(scope='session')
 def rabbit_container(docker, session_id, rabbit_tag, request):
     image = 'rabbitmq:{}'.format(rabbit_tag)
+
+    if request.config.option.local_docker:
+        rabbit_port = unused_port()
+    else:
+        rabbit_port = None
+
     container = docker.containers.run(
         image, detach=True,
         name='rabbitmq-'+session_id,
-        ports={'5672/tcp': None})
+        ports={'5672/tcp': rabbit_port})
 
-    inspection = docker.api.inspect_container(container.id)
-    host = inspection['NetworkSettings']['IPAddress']
+    def defer():
+        container.kill(signal=9)
+        container.remove(force=True)
+
+    atexit.register(defer)
+
+    if request.config.option.local_docker:
+        host = '0.0.0.0'
+    else:
+        inspection = docker.api.inspect_container(container.id)
+        host = inspection['NetworkSettings']['IPAddress']
+
     ret = {'container': container,
            'host': host,
            'port': 5672,
@@ -115,9 +135,6 @@ def rabbit_container(docker, session_id, rabbit_tag, request):
            'password': 'guest'}
     probe(ret)
     yield ret
-
-    container.kill()
-    container.remove()
 
 
 @pytest.fixture
