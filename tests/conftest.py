@@ -70,8 +70,6 @@ def pytest_addoption(parser):
                      help=("Rabbitmq server versions. "
                            "May be used several times. "
                            "3.6.11-alpine by default"))
-    parser.addoption("--no-pull", action="store_true", default=False,
-                     help="Don't perform docker images pulling")
 
 
 def pytest_generate_tests(metafunc):
@@ -103,8 +101,6 @@ def probe(container):
 @pytest.fixture(scope='session')
 def rabbit_container(docker, session_id, rabbit_tag, request):
     image = 'rabbitmq:{}'.format(rabbit_tag)
-    if not request.config.option.no_pull:
-        docker.images.pull(image)
     container = docker.containers.run(
         image, detach=True,
         name='rabbitmq-'+session_id,
