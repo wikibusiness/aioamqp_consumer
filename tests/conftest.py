@@ -10,7 +10,6 @@ from docker import from_env as docker_from_env
 
 from aioamqp_consumer import Producer
 
-
 asyncio.set_event_loop(None)
 
 
