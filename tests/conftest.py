@@ -1,58 +1,24 @@
 import atexit
-import asyncio
 import socket
 import time
 import uuid
 
 import pytest
-from aiohttp.test_utils import unused_port
 from docker import from_env as docker_from_env
 
 from aioamqp_consumer import Producer
 
 
+def unused_port():
+    """Return a port that is unused on the current host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
 @pytest.fixture
-def loop(request):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(None)
-
-    loop.set_debug(True)
-
-    request.addfinalizer(lambda: asyncio.set_event_loop(None))
-
-    yield loop
-
-    loop.call_soon(loop.stop)
-    loop.run_forever()
-    loop.close()
-
-
-@pytest.mark.tryfirst
-def pytest_pycollect_makeitem(collector, name, obj):
-    if collector.funcnamefilter(name):
-        item = pytest.Function(name, parent=collector)
-
-        if 'run_loop' in item.keywords:
-            return list(collector._genfunctions(name, obj))
-
-
-@pytest.mark.tryfirst
-def pytest_pyfunc_call(pyfuncitem):
-    if 'run_loop' in pyfuncitem.keywords:
-        funcargs = pyfuncitem.funcargs
-
-        loop = funcargs['loop']
-
-        testargs = {
-            arg: funcargs[arg]
-            for arg in pyfuncitem._fixtureinfo.argnames
-        }
-
-        assert asyncio.iscoroutinefunction(pyfuncitem.obj)
-
-        loop.run_until_complete(pyfuncitem.obj(**testargs))
-
-        return True
+def loop(event_loop):
+    return event_loop
 
 
 @pytest.fixture(scope='session')
