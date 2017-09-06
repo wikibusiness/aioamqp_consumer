@@ -1,8 +1,4 @@
-import pytest
-
 from aioamqp_consumer import Consumer
-
-pytestmark = pytest.mark.asyncio
 
 
 async def test_consumer_smoke(producer, loop, amqp_queue_name, amqp_url):

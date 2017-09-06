@@ -1,4 +1,6 @@
+import asyncio
 import atexit
+import gc
 import socket
 import time
 import uuid
@@ -9,11 +11,30 @@ from docker import from_env as docker_from_env
 from aioamqp_consumer import Producer
 
 
+asyncio.set_event_loop(None)
+
+
 def unused_port():
     """Return a port that is unused on the current host."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
+
+
+@pytest.fixture
+def event_loop(request):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    yield loop
+
+    if not loop._closed:
+        loop.call_soon(loop.stop)
+        loop.run_forever()
+        loop.close()
+
+    gc.collect()
+    asyncio.set_event_loop(None)
 
 
 @pytest.fixture
@@ -31,6 +52,12 @@ def session_id():
 def docker():
     client = docker_from_env(version='auto')
     return client
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if asyncio.iscoroutinefunction(item.function):
+            item.add_marker(pytest.mark.asyncio)
 
 
 def pytest_addoption(parser):
